@@ -219,6 +219,12 @@ async def index_forwarded_channel(client, message: Message):
     )
 
     await message.reply_text("✅ ইনডেক্স করা হয়েছে!")
+@pyrogram_app.on_message(filters.private)
+async def check_forward(client, message: Message):
+    if message.forward_from_chat:
+        await message.reply_text(f"✅ ফরওয়ার্ড এসেছে: {message.forward_from_chat.title}")
+    else:
+        await message.reply_text("⚠️ এটি চ্যানেল থেকে ফরওয়ার্ড করা মেসেজ না।")
 
 # Run the bot
 if __name__ == "__main__":
