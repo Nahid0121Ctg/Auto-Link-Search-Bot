@@ -193,6 +193,10 @@ async def group_search_movie(client, message: Message):
 
 # ফরওয়ার্ড করা চ্যানেল ইনডেক্স করার ফিচার
 @pyrogram_app.on_message(filters.private)
+async def test_forward_debug(client, message: Message):
+    print("Raw message:", message)
+    await message.reply("✅ বট আপনার মেসেজ রিসিভ করেছে।")
+
 async def index_forwarded_channel(client, message: Message):
     if not message.forward_from_chat or message.forward_from_chat.type != "channel":
         return  # যদি এটি চ্যানেল থেকে ফরওয়ার্ড করা না হয়, তাহলে কিছু না করে ফিরে যাবে
