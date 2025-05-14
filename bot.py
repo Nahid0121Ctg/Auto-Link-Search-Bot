@@ -195,30 +195,30 @@ async def group_search_movie(client, message: Message):
 @pyrogram_app.on_message(filters.private)
 async def index_forwarded_channel(client, message: Message):
     if not message.forward_from_chat or message.forward_from_chat.type != "channel":
+        return  # যদি এটি চ্যানেল থেকে ফরওয়ার্ড করা না হয়, তাহলে কিছু না করে ফিরে যাবে
+
+    text = message.text or message.caption
+    if not text:
+        await message.reply_text("মেসেজে কোনো লেখা নেই ইনডেক্স করার মতো।")
         return
 
-    chat_id = message.forward_from_chat.id
-    chat_username = message.forward_from_chat.username or "Private Channel"
-    total_indexed = 0
+    # আগেই ইনডেক্স করা আছে কিনা চেক
+    existing = collection.find_one({"message_id": message.forward_from_message_id})
+    if existing:
+        await message.reply_text("ℹ️ এই মুভিটি ইতিমধ্যে ইনডেক্স করা হয়েছে।")
+        return
 
-    try:
-        async for msg in client.get_chat_history(chat_id):
-            text = msg.text or msg.caption
-            if text:
-                collection.update_one(
-                    {"message_id": msg.id},
-                    {"$set": {"text": text, "message_id": msg.id}},
-                    upsert=True
-                )
-                total_indexed += 1
-    except Exception as e:
-        return await message.reply_text(f"❌ ইনডেক্স করতে ব্যর্থ!\nকারণ: `{e}`")
-
-    await message.reply_text(
-        f"✅ **ইনডেক্স সম্পন্ন!**\n"
-        f"Channel: `{chat_username}`\n"
-        f"মোট {total_indexed} টি মেসেজ ইনডেক্স হয়েছে।"
+    # ইনডেক্স করা হচ্ছে
+    collection.update_one(
+        {"message_id": message.forward_from_message_id},
+        {"$set": {
+            "text": text,
+            "message_id": message.forward_from_message_id
+        }},
+        upsert=True
     )
+
+    await message.reply_text("✅ ইনডেক্স করা হয়েছে!")
 
 # Run the bot
 if __name__ == "__main__":
