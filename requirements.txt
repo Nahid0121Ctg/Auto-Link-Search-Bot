@@ -1,5 +1,5 @@
 pyrogram
 tgcrypto
 pymongo[srv]
-fastapi
 uvicorn
+rapidfuzz
