@@ -26,13 +26,21 @@ mongo_client = MongoClient(MONGO_URI)
 db = mongo_client["movie_bot"]
 collection = db["movies"]
 user_collection = db["users"]
+not_found_collection = db["not_found"]
 
 pyrogram_app = Client("MovieBot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
 @pyrogram_app.on_message(filters.private & filters.command("start"))
 async def start_handler(client, message: Message):
     user_collection.update_one({"user_id": message.from_user.id}, {"$set": {"user_id": message.from_user.id}}, upsert=True)
-    await message.reply_text("হ্যালো! আমি মুভি লিংক সার্চ বট!\n\nমুভির নাম লিখো, আমি খুঁজে এনে দিব!")
+    await message.reply_text("হ্যালো! আমি মুভি লিংক সার্চ বট!\n\nমুভির নাম লিখো, আমি খুঁজে এনে দিব!",
+        reply_markup=InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("➕ Add to Group", url=f"https://t.me/{client.me.username}?startgroup=true"),
+                InlineKeyboardButton("📢 Update Channel", url="https://t.me/YourChannelLink")
+            ]
+        ])
+    )
 
 @pyrogram_app.on_message(filters.private & filters.command("help"))
 async def help_handler(client, message: Message):
@@ -84,15 +92,34 @@ async def search_movie(client, message: Message):
         except Exception as e:
             await message.reply_text(f"ফরওয়ার্ড করতে সমস্যা: {e}")
     else:
+        not_found_collection.update_one(
+            {"query": query.lower()},
+            {
+                "$addToSet": {"users": message.from_user.id},
+                "$set": {"query": query.lower()}
+            },
+            upsert=True
+        )
+
+        for admin_id in ADMINS:
+            try:
+                await client.send_message(
+                    chat_id=admin_id,
+                    text=f"⚠️ ইউজার @{message.from_user.username or message.from_user.id} '{query}' মুভি খুঁজে পায়নি।"
+                )
+            except Exception as e:
+                print(f"Failed to notify admin {admin_id}: {e}")
+
         suggestions = collection.find({"text": {"$regex": query, "$options": "i"}}).limit(5)
         buttons = [
             [InlineKeyboardButton(movie["text"][:30], callback_data=f"id_{movie['message_id']}")]
             for movie in suggestions
         ]
-        if buttons:
+
+        if collection.count_documents({"text": {"$regex": query, "$options": "i"}}) > 0:
             await message.reply("আপনি কি নিচের কোনটি খুঁজছেন?", reply_markup=InlineKeyboardMarkup(buttons))
         else:
-            await message.reply("দুঃখিত, কিছুই খুঁজে পাইনি!")
+            await message.reply(f"দুঃখিত, '{query}' নামে কিছু খুঁজে পাইনি!")
 
 @pyrogram_app.on_callback_query(filters.regex("^id_"))
 async def suggestion_click(client, callback_query: CallbackQuery):
@@ -125,6 +152,44 @@ async def save_channel_messages(client, message: Message):
                 upsert=True
             )
             print(f"Saved: {text[:40]}...")
+
+@pyrogram_app.on_message(filters.private & filters.command("check_requests") & filters.user(ADMINS))
+async def check_requests(client, message: Message):
+    requests = not_found_collection.find()
+    response = "এই মুভিগুলো খোঁজার জন্য রিকোয়েস্ট করা হয়েছে:\n\n"
+    for request in requests:
+        users = ", ".join([str(user) for user in request["users"]])
+        response += f"মুভি: {request['query']}, ইউজাররা: {users}\n"
+    await message.reply_text(response)
+
+# Group support
+@pyrogram_app.on_message(filters.group & filters.text & ~filters.command(["start", "help", "stats", "delete_all", "broadcast"]))
+async def group_search_movie(client, message: Message):
+    query = message.text.strip()
+    result = collection.find_one({"text": {"$regex": f"^{query}$", "$options": "i"}})
+
+    if result:
+        try:
+            sent = await pyrogram_app.forward_messages(
+                chat_id=message.chat.id,
+                from_chat_id=CHANNEL_ID,
+                message_ids=result["message_id"]
+            )
+            await asyncio.sleep(300)
+            await sent.delete()
+        except Exception as e:
+            await message.reply_text(f"ফরওয়ার্ড করতে সমস্যা: {e}")
+    else:
+        suggestions = collection.find({"text": {"$regex": query, "$options": "i"}}).limit(5)
+        buttons = [
+            [InlineKeyboardButton(movie["text"][:30], callback_data=f"id_{movie['message_id']}")]
+            for movie in suggestions
+        ]
+
+        if collection.count_documents({"text": {"$regex": query, "$options": "i"}}) > 0:
+            await message.reply("আপনি কি নিচের কোনটি খুঁজছেন?", reply_markup=InlineKeyboardMarkup(buttons))
+        else:
+            await message.reply(f"দুঃখিত, '{query}' নামে কিছু খুঁজে পাইনি!")
 
 # Run the bot
 if __name__ == "__main__":
