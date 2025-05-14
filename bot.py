@@ -191,15 +191,14 @@ async def group_search_movie(client, message: Message):
         else:
             await message.reply(f"দুঃখিত, '{query}' নামে কিছু খুঁজে পাইনি!")
 
+# ফরওয়ার্ড করা চ্যানেল ইনডেক্স করার ফিচার
 @pyrogram_app.on_message(filters.private)
 async def index_forwarded_channel(client, message: Message):
-    # শুধু চেক করো এটা ফরওয়ার্ডেড চ্যানেল মেসেজ কিনা
     if not message.forward_from_chat or message.forward_from_chat.type != "channel":
         return
 
     chat_id = message.forward_from_chat.id
     chat_username = message.forward_from_chat.username or "Private Channel"
-
     total_indexed = 0
 
     try:
@@ -218,7 +217,9 @@ async def index_forwarded_channel(client, message: Message):
     await message.reply_text(
         f"✅ **ইনডেক্স সম্পন্ন!**\n"
         f"Channel: `{chat_username}`\n"
-        f"মোট {total_indexed} টি মেসেজ ইনডেক্স করা হয়েছে।"
+        f"মোট {total_indexed} টি মেসেজ ইনডেক্স হয়েছে।"
     )
 
+# Run the bot
+if __name__ == "__main__":
     pyrogram_app.run()
