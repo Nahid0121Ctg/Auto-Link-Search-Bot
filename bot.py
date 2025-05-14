@@ -221,7 +221,34 @@ async def auto_index_forwarded_channel(client, message: Message):
         await message.reply_text(f"✅ মোট {total_indexed}টি মুভি ইনডেক্স করা হয়েছে!")
     except Exception as e:
         await message.reply_text(f"ইনডেক্স করতে সমস্যা হয়েছে: {e}")
+@pyrogram_app.on_message(filters.private & filters.forwarded)
+async def index_forwarded_channel(client, message: Message):
+    if not message.forward_from_chat or message.forward_from_chat.type != "channel":
+        return await message.reply_text("⚠️ দুঃখিত, শুধু চ্যানেল থেকে ফরওয়ার্ড করা মেসেজই ইনডেক্স করা যাবে।")
 
+    chat_id = message.forward_from_chat.id
+    chat_username = message.forward_from_chat.username or "Private Channel"
+
+    total_indexed = 0
+
+    try:
+        async for msg in client.get_chat_history(chat_id):
+            text = msg.text or msg.caption
+            if text:
+                collection.update_one(
+                    {"message_id": msg.id},
+                    {"$set": {"text": text, "message_id": msg.id}},
+                    upsert=True
+                )
+                total_indexed += 1
+    except Exception as e:
+        return await message.reply_text(f"❌ ইনডেক্স করতে ব্যর্থ!\nকারণ: `{e}`")
+
+    await message.reply_text(
+        f"✅ **ইনডেক্স সম্পন্ন!**\n"
+        f"Channel: `{chat_username}`\n"
+        f"মোট {total_indexed} টি মেসেজ ইনডেক্স করা হয়েছে।"
+    )
 # Run the bot
 if __name__ == "__main__":
     pyrogram_app.run()
