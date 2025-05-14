@@ -78,7 +78,13 @@ async def broadcast_handler(client, message: Message):
 @pyrogram_app.on_message(filters.text & filters.private & ~filters.command(["start", "help", "stats", "delete_all", "broadcast"]))
 async def search_movie(client, message: Message):
     query = message.text.strip()
+
+    # Try exact match first
     result = collection.find_one({"text": {"$regex": f"^{query}$", "$options": "i"}})
+
+    if not result:
+        # Try partial match if exact not found
+        result = collection.find_one({"text": {"$regex": query, "$options": "i"}})
 
     if result:
         try:
@@ -116,7 +122,7 @@ async def search_movie(client, message: Message):
             for movie in suggestions
         ]
 
-        if collection.count_documents({"text": {"$regex": query, "$options": "i"}}) > 0:
+        if buttons:
             await message.reply("আপনি কি নিচের কোনটি খুঁজছেন?", reply_markup=InlineKeyboardMarkup(buttons))
         else:
             await message.reply(f"দুঃখিত, '{query}' নামে কিছু খুঁজে পাইনি!")
@@ -162,11 +168,13 @@ async def check_requests(client, message: Message):
         response += f"মুভি: {request['query']}, ইউজাররা: {users}\n"
     await message.reply_text(response)
 
-# Group support
 @pyrogram_app.on_message(filters.group & filters.text & ~filters.command(["start", "help", "stats", "delete_all", "broadcast"]))
 async def group_search_movie(client, message: Message):
     query = message.text.strip()
+
     result = collection.find_one({"text": {"$regex": f"^{query}$", "$options": "i"}})
+    if not result:
+        result = collection.find_one({"text": {"$regex": query, "$options": "i"}})
 
     if result:
         try:
@@ -186,7 +194,7 @@ async def group_search_movie(client, message: Message):
             for movie in suggestions
         ]
 
-        if collection.count_documents({"text": {"$regex": query, "$options": "i"}}) > 0:
+        if buttons:
             await message.reply("আপনি কি নিচের কোনটি খুঁজছেন?", reply_markup=InlineKeyboardMarkup(buttons))
         else:
             await message.reply(f"দুঃখিত, '{query}' নামে কিছু খুঁজে পাইনি!")
