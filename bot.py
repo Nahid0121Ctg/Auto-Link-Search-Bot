@@ -5,7 +5,7 @@ from http.server import SimpleHTTPRequestHandler, HTTPServer
 from pyrogram import Client, filters
 from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from pymongo import MongoClient
-from rapidfuzz import fuzz
+from rapidfuzz import fuzz  # নতুন লাইব্রেরি fuzzy match এর জন্য
 
 # Start a simple web server for Koyeb health check
 def start_web():
@@ -15,7 +15,6 @@ def start_web():
 
 threading.Thread(target=start_web).start()
 
-# Pyrogram Bot Setup
 API_ID = int(os.environ.get("API_ID"))
 API_HASH = os.environ.get("API_HASH")
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
@@ -81,10 +80,9 @@ async def search_movie(client, message: Message):
     query = message.text.strip().lower()
 
     result = collection.find_one({"text": {"$regex": f"^{query}$", "$options": "i"}})
-
     if not result:
-        possible = collection.find()
-        for item in possible:
+        results = list(collection.find())
+        for item in results:
             title = item.get("text", "").lower()
             score = fuzz.ratio(query, title)
             if score >= 90:
@@ -104,14 +102,13 @@ async def search_movie(client, message: Message):
             await message.reply_text(f"ফরওয়ার্ড করতে সমস্যা: {e}")
     else:
         not_found_collection.update_one(
-            {"query": query.lower()},
+            {"query": query},
             {
                 "$addToSet": {"users": message.from_user.id},
-                "$set": {"query": query.lower()}
+                "$set": {"query": query}
             },
             upsert=True
         )
-
         for admin_id in ADMINS:
             try:
                 await client.send_message(
@@ -121,15 +118,11 @@ async def search_movie(client, message: Message):
             except Exception as e:
                 print(f"Failed to notify admin {admin_id}: {e}")
 
-        suggestions = collection.find()
-        buttons = []
-
-        for item in suggestions:
-            title = item.get("text", "")
-            score = fuzz.ratio(query, title.lower())
-            if score >= 90:
-                buttons.append([InlineKeyboardButton(title[:30], callback_data=f"id_{item['message_id']}")])
-
+        suggestions = collection.find({"text": {"$regex": query, "$options": "i"}}).limit(5)
+        buttons = [
+            [InlineKeyboardButton(movie["text"][:30], callback_data=f"id_{movie['message_id']}")]
+            for movie in suggestions
+        ]
         if buttons:
             await message.reply("আপনি কি নিচের কোনটি খুঁজছেন?", reply_markup=InlineKeyboardMarkup(buttons))
         else:
@@ -166,7 +159,6 @@ async def save_channel_messages(client, message: Message):
                 upsert=True
             )
             print(f"Saved: {text[:40]}...")
-
             users = user_collection.find()
             for user in users:
                 try:
@@ -193,12 +185,10 @@ async def check_requests(client, message: Message):
 @pyrogram_app.on_message(filters.group & filters.text & ~filters.command(["start", "help", "stats", "delete_all", "broadcast"]))
 async def group_search_movie(client, message: Message):
     query = message.text.strip().lower()
-
     result = collection.find_one({"text": {"$regex": f"^{query}$", "$options": "i"}})
-
     if not result:
-        possible = collection.find()
-        for item in possible:
+        results = list(collection.find())
+        for item in results:
             title = item.get("text", "").lower()
             score = fuzz.ratio(query, title)
             if score >= 90:
@@ -217,20 +207,15 @@ async def group_search_movie(client, message: Message):
         except Exception as e:
             await message.reply_text(f"ফরওয়ার্ড করতে সমস্যা: {e}")
     else:
-        suggestions = collection.find()
-        buttons = []
-
-        for item in suggestions:
-            title = item.get("text", "")
-            score = fuzz.ratio(query, title.lower())
-            if score >= 90:
-                buttons.append([InlineKeyboardButton(title[:30], callback_data=f"id_{item['message_id']}")])
-
+        suggestions = collection.find({"text": {"$regex": query, "$options": "i"}}).limit(5)
+        buttons = [
+            [InlineKeyboardButton(movie["text"][:30], callback_data=f"id_{movie['message_id']}")]
+            for movie in suggestions
+        ]
         if buttons:
             await message.reply("আপনি কি নিচের কোনটি খুঁজছেন?", reply_markup=InlineKeyboardMarkup(buttons))
         else:
             await message.reply(f"দুঃখিত, '{query}' নামে কিছু খুঁজে পাইনি!")
 
-# Run the bot
 if __name__ == "__main__":
     pyrogram_app.run()
