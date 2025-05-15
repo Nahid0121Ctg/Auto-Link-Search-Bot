@@ -5,6 +5,7 @@ from http.server import SimpleHTTPRequestHandler, HTTPServer
 from pyrogram import Client, filters
 from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from pymongo import MongoClient
+from rapidfuzz import fuzz
 
 # Start a simple web server for Koyeb health check
 def start_web():
@@ -37,7 +38,7 @@ async def start_handler(client, message: Message):
         reply_markup=InlineKeyboardMarkup([
             [
                 InlineKeyboardButton("➕ Add to Group", url=f"https://t.me/{client.me.username}?startgroup=true"),
-                InlineKeyboardButton("📢 Update Channel", url="https://t.me/YourChannelLink")
+                InlineKeyboardButton("📢 Update Channel", url="https://t.me/CTGMovieOfficial")
             ]
         ])
     )
@@ -77,28 +78,34 @@ async def broadcast_handler(client, message: Message):
 
 @pyrogram_app.on_message(filters.text & filters.private & ~filters.command(["start", "help", "stats", "delete_all", "broadcast"]))
 async def search_movie(client, message: Message):
-    query = message.text.strip()
+    query = message.text.strip().lower()
+    movies = list(collection.find())
+    best_match = None
+    best_score = 0
 
-    result = collection.find_one({"text": {"$regex": f"^{query}$", "$options": "i"}})
-    if not result:
-        result = collection.find_one({"text": {"$regex": query, "$options": "i"}})
+    for movie in movies:
+        title = movie.get("text", "").lower()
+        score = fuzz.partial_ratio(query, title)
+        if score > best_score:
+            best_score = score
+            best_match = movie
 
-    if result:
+    if best_score >= 90 and best_match:
         try:
             sent = await pyrogram_app.forward_messages(
                 chat_id=message.chat.id,
                 from_chat_id=CHANNEL_ID,
-                message_ids=result["message_id"]
+                message_ids=best_match["message_id"]
             )
             await asyncio.sleep(300)
             await sent.delete()
         except Exception as e:
             await message.reply_text(f"ফরওয়ার্ড করতে সমস্যা: {e}")
     else:
-        suggestions = collection.find({"text": {"$regex": query, "$options": "i"}}).limit(5)
+        suggestions = sorted(movies, key=lambda m: fuzz.partial_ratio(query, m.get("text", "").lower()), reverse=True)[:5]
         buttons = [
             [InlineKeyboardButton(movie["text"][:30], callback_data=f"id_{movie['message_id']}")]
-            for movie in suggestions
+            for movie in suggestions if fuzz.partial_ratio(query, movie.get("text", "").lower()) > 50
         ]
 
         if buttons:
@@ -106,13 +113,9 @@ async def search_movie(client, message: Message):
         else:
             not_found_collection.update_one(
                 {"query": query.lower()},
-                {
-                    "$addToSet": {"users": message.from_user.id},
-                    "$set": {"query": query.lower()}
-                },
+                {"$addToSet": {"users": message.from_user.id}, "$set": {"query": query.lower()}},
                 upsert=True
             )
-
             for admin_id in ADMINS:
                 try:
                     await client.send_message(
@@ -156,7 +159,6 @@ async def save_channel_messages(client, message: Message):
             )
             print(f"Saved: {text[:40]}...")
 
-            # Notify users about new movie
             users = user_collection.find()
             for user in users:
                 try:
@@ -182,28 +184,34 @@ async def check_requests(client, message: Message):
 
 @pyrogram_app.on_message(filters.group & filters.text & ~filters.command(["start", "help", "stats", "delete_all", "broadcast"]))
 async def group_search_movie(client, message: Message):
-    query = message.text.strip()
+    query = message.text.strip().lower()
+    movies = list(collection.find())
+    best_match = None
+    best_score = 0
 
-    result = collection.find_one({"text": {"$regex": f"^{query}$", "$options": "i"}})
-    if not result:
-        result = collection.find_one({"text": {"$regex": query, "$options": "i"}})
+    for movie in movies:
+        title = movie.get("text", "").lower()
+        score = fuzz.partial_ratio(query, title)
+        if score > best_score:
+            best_score = score
+            best_match = movie
 
-    if result:
+    if best_score >= 70 and best_match:
         try:
             sent = await pyrogram_app.forward_messages(
                 chat_id=message.chat.id,
                 from_chat_id=CHANNEL_ID,
-                message_ids=result["message_id"]
+                message_ids=best_match["message_id"]
             )
             await asyncio.sleep(300)
             await sent.delete()
         except Exception as e:
             await message.reply_text(f"ফরওয়ার্ড করতে সমস্যা: {e}")
     else:
-        suggestions = collection.find({"text": {"$regex": query, "$options": "i"}}).limit(5)
+        suggestions = sorted(movies, key=lambda m: fuzz.partial_ratio(query, m.get("text", "").lower()), reverse=True)[:5]
         buttons = [
             [InlineKeyboardButton(movie["text"][:30], callback_data=f"id_{movie['message_id']}")]
-            for movie in suggestions
+            for movie in suggestions if fuzz.partial_ratio(query, movie.get("text", "").lower()) > 50
         ]
 
         if buttons:
