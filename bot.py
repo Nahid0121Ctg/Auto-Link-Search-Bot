@@ -37,7 +37,7 @@ async def start_handler(client, message: Message):
         reply_markup=InlineKeyboardMarkup([
             [
                 InlineKeyboardButton("\u2795 Add to Group", url=f"https://t.me/{client.me.username}?startgroup=true"),
-                InlineKeyboardButton("\ud83d\udce2 Update Channel", url="https://t.me/YourChannelLink")
+                InlineKeyboardButton("📢 Update Channel", url="https://t.me/YourChannelLink")
             ]
         ])
     )
