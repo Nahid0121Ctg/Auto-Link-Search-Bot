@@ -5,6 +5,7 @@ from http.server import SimpleHTTPRequestHandler, HTTPServer
 from pyrogram import Client, filters
 from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from pymongo import MongoClient
+from rapidfuzz import process  # নতুন লাইব্রেরি
 
 # Start a simple web server for Koyeb health check
 def start_web():
@@ -80,7 +81,6 @@ async def search_movie(client, message: Message):
     query = message.text.strip()
 
     result = collection.find_one({"text": {"$regex": f"^{query}$", "$options": "i"}})
-
     if not result:
         result = collection.find_one({"text": {"$regex": query, "$options": "i"}})
 
@@ -114,14 +114,16 @@ async def search_movie(client, message: Message):
             except Exception as e:
                 print(f"Failed to notify admin {admin_id}: {e}")
 
-        suggestions = collection.find({"text": {"$regex": query, "$options": "i"}}).limit(5)
-        buttons = [
-            [InlineKeyboardButton(movie["text"][:30], callback_data=f"id_{movie['message_id']}")]
-            for movie in suggestions
-        ]
+        all_movies = list(collection.find({}, {"text": 1, "message_id": 1}))
+        choices = {doc["text"]: doc["message_id"] for doc in all_movies}
+        suggestions = process.extract(query, choices.keys(), limit=5, score_cutoff=90)
 
-        if buttons:
-            await message.reply("আপনি কি নিচের কোনটি খুঁজছেন?", reply_markup=InlineKeyboardMarkup(buttons))
+        if suggestions:
+            buttons = [
+                [InlineKeyboardButton(text=match[0][:30], callback_data=f"id_{choices[match[0]]}")]
+                for match in suggestions
+            ]
+            await message.reply("আপনি কি নিচের কোনটি খুঁজছিলেন?", reply_markup=InlineKeyboardMarkup(buttons))
         else:
             await message.reply(f"দুঃখিত, '{query}' নামে কিছু খুঁজে পাইনি!")
 
@@ -157,7 +159,6 @@ async def save_channel_messages(client, message: Message):
             )
             print(f"Saved: {text[:40]}...")
 
-            # Notify users about new movie
             users = user_collection.find()
             for user in users:
                 try:
