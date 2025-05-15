@@ -5,7 +5,7 @@ from http.server import SimpleHTTPRequestHandler, HTTPServer
 from pyrogram import Client, filters
 from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from pymongo import MongoClient
-from rapidfuzz import process  # নতুন লাইব্রেরি
+from rapidfuzz import fuzz
 
 # Start a simple web server for Koyeb health check
 def start_web():
@@ -78,11 +78,18 @@ async def broadcast_handler(client, message: Message):
 
 @pyrogram_app.on_message(filters.text & filters.private & ~filters.command(["start", "help", "stats", "delete_all", "broadcast"]))
 async def search_movie(client, message: Message):
-    query = message.text.strip()
+    query = message.text.strip().lower()
 
     result = collection.find_one({"text": {"$regex": f"^{query}$", "$options": "i"}})
+
     if not result:
-        result = collection.find_one({"text": {"$regex": query, "$options": "i"}})
+        possible = collection.find()
+        for item in possible:
+            title = item.get("text", "").lower()
+            score = fuzz.ratio(query, title)
+            if score >= 90:
+                result = item
+                break
 
     if result:
         try:
@@ -114,16 +121,17 @@ async def search_movie(client, message: Message):
             except Exception as e:
                 print(f"Failed to notify admin {admin_id}: {e}")
 
-        all_movies = list(collection.find({}, {"text": 1, "message_id": 1}))
-        choices = {doc["text"]: doc["message_id"] for doc in all_movies}
-        suggestions = process.extract(query, choices.keys(), limit=5, score_cutoff=90)
+        suggestions = collection.find()
+        buttons = []
 
-        if suggestions:
-            buttons = [
-                [InlineKeyboardButton(text=match[0][:30], callback_data=f"id_{choices[match[0]]}")]
-                for match in suggestions
-            ]
-            await message.reply("আপনি কি নিচের কোনটি খুঁজছিলেন?", reply_markup=InlineKeyboardMarkup(buttons))
+        for item in suggestions:
+            title = item.get("text", "")
+            score = fuzz.ratio(query, title.lower())
+            if score >= 90:
+                buttons.append([InlineKeyboardButton(title[:30], callback_data=f"id_{item['message_id']}")])
+
+        if buttons:
+            await message.reply("আপনি কি নিচের কোনটি খুঁজছেন?", reply_markup=InlineKeyboardMarkup(buttons))
         else:
             await message.reply(f"দুঃখিত, '{query}' নামে কিছু খুঁজে পাইনি!")
 
@@ -184,11 +192,18 @@ async def check_requests(client, message: Message):
 
 @pyrogram_app.on_message(filters.group & filters.text & ~filters.command(["start", "help", "stats", "delete_all", "broadcast"]))
 async def group_search_movie(client, message: Message):
-    query = message.text.strip()
+    query = message.text.strip().lower()
 
     result = collection.find_one({"text": {"$regex": f"^{query}$", "$options": "i"}})
+
     if not result:
-        result = collection.find_one({"text": {"$regex": query, "$options": "i"}})
+        possible = collection.find()
+        for item in possible:
+            title = item.get("text", "").lower()
+            score = fuzz.ratio(query, title)
+            if score >= 90:
+                result = item
+                break
 
     if result:
         try:
@@ -202,11 +217,14 @@ async def group_search_movie(client, message: Message):
         except Exception as e:
             await message.reply_text(f"ফরওয়ার্ড করতে সমস্যা: {e}")
     else:
-        suggestions = collection.find({"text": {"$regex": query, "$options": "i"}}).limit(5)
-        buttons = [
-            [InlineKeyboardButton(movie["text"][:30], callback_data=f"id_{movie['message_id']}")]
-            for movie in suggestions
-        ]
+        suggestions = collection.find()
+        buttons = []
+
+        for item in suggestions:
+            title = item.get("text", "")
+            score = fuzz.ratio(query, title.lower())
+            if score >= 90:
+                buttons.append([InlineKeyboardButton(title[:30], callback_data=f"id_{item['message_id']}")])
 
         if buttons:
             await message.reply("আপনি কি নিচের কোনটি খুঁজছেন?", reply_markup=InlineKeyboardMarkup(buttons))
