@@ -37,7 +37,7 @@ async def start_handler(client, message: Message):
         reply_markup=InlineKeyboardMarkup([
             [
                 InlineKeyboardButton("➕ Add to Group", url=f"https://t.me/{client.me.username}?startgroup=true"),
-                InlineKeyboardButton("📢 Update Channel", url="https://t.me/CTGMovieOfficial")
+                InlineKeyboardButton("📢 Update Channel", url="https://t.me/YourChannelLink")
             ]
         ])
     )
@@ -79,11 +79,9 @@ async def broadcast_handler(client, message: Message):
 async def search_movie(client, message: Message):
     query = message.text.strip()
 
-    # Try exact match first
     result = collection.find_one({"text": {"$regex": f"^{query}$", "$options": "i"}})
 
     if not result:
-        # Try partial match if exact not found
         result = collection.find_one({"text": {"$regex": query, "$options": "i"}})
 
     if result:
@@ -158,6 +156,21 @@ async def save_channel_messages(client, message: Message):
                 upsert=True
             )
             print(f"Saved: {text[:40]}...")
+
+            # Notify users about new movie
+            users = user_collection.find()
+            for user in users:
+                try:
+                    await client.send_message(
+                        chat_id=user["user_id"],
+                        text=(
+                            "হ্যালো গাইস!\n\n"
+                            f"নতুন মুভি **'{text[:35]}'** এখন মাত্র আপলোড করা হয়েছে!\n"
+                            "আপনি চাইলে এখনই নামটি লিখে সার্চ করে দেখে নিতে পারেন।"
+                        )
+                    )
+                except Exception as e:
+                    print(f"Couldn't notify user {user['user_id']}: {e}")
 
 @pyrogram_app.on_message(filters.private & filters.command("check_requests") & filters.user(ADMINS))
 async def check_requests(client, message: Message):
