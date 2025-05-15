@@ -36,7 +36,7 @@ async def start_handler(client, message: Message):
     await message.reply_text("হ্যালো! আমি মুভি লিংক সার্চ বট!\n\nমুভির নাম লিখো, আমি খুঁজে এনে দিব!",
         reply_markup=InlineKeyboardMarkup([
             [
-                InlineKeyboardButton("➕ Add to Group", url=f"https://t.me/{client.me.username}?startgroup=true"),
+                InlineKeyboardButton("\u2795 Add to Group", url=f"https://t.me/{client.me.username}?startgroup=true"),
                 InlineKeyboardButton("\ud83d\udce2 Update Channel", url="https://t.me/YourChannelLink")
             ]
         ])
@@ -103,17 +103,23 @@ async def save_channel_messages(client, message: Message):
             if message.photo:
                 thumb = message.photo.file_id
 
-            caption_entities = message.caption_entities or []
-            for entity in caption_entities:
-                if entity.type == "bold":
-                    year = entity.user
-
             collection.update_one(
                 {"message_id": message.id},
                 {"$set": {"text": text, "message_id": message.id, "year": year, "type": mtype, "thumb": thumb}},
                 upsert=True
             )
             print(f"Saved: {text[:40]}...")
+
+            # Notify all users with the new movie
+            users = user_collection.find()
+            for user in users:
+                try:
+                    await client.send_message(
+                        chat_id=user["user_id"],
+                        text=f"নতুন মুভি আপলোড হয়েছে!\n\n{message.text or message.caption}\n\n✅ এখনই চেক করে দেখুন!"
+                    )
+                except Exception as e:
+                    print(f"Failed to send movie to {user['user_id']}: {e}")
 
 @pyrogram_app.on_message(filters.private & filters.command("help"))
 async def help_handler(client, message: Message):
@@ -128,7 +134,7 @@ async def stats_handler(client, message: Message):
 @pyrogram_app.on_message(filters.private & filters.command("delete_all") & filters.user(ADMINS))
 async def delete_all_handler(client, message: Message):
     collection.delete_many({})
-    await message.reply_text("সব মুভি ডাটাবেজ থেকে মুছে ফেলা হয়েছে।")
+    await message.reply_text("সব মুভি ডাটাবেজ থেকে মুছে ফেলা হয়েছে।")
 
 @pyrogram_app.on_message(filters.private & filters.command("broadcast") & filters.user(ADMINS))
 async def broadcast_handler(client, message: Message):
@@ -151,7 +157,7 @@ async def broadcast_handler(client, message: Message):
 @pyrogram_app.on_message(filters.private & filters.command("check_requests") & filters.user(ADMINS))
 async def check_requests(client, message: Message):
     requests = not_found_collection.find()
-    response = "এই মুভিগুলো খোঁজার জন্য রিকোয়েস্ট করা হয়েছে:\n\n"
+    response = "এই মুভিগুলো খোঁজার জন্য রিকোয়েস্ট করা হয়েছে:\n\n"
     for request in requests:
         users = ", ".join([str(user) for user in request["users"]])
         response += f"মুভি: {request['query']}, ইউজাররা: {users}\n"
