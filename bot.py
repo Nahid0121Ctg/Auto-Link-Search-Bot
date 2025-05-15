@@ -3,8 +3,9 @@ import asyncio
 import threading
 from http.server import SimpleHTTPRequestHandler, HTTPServer
 from pyrogram import Client, filters
-from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, InputMediaPhoto
+from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from pymongo import MongoClient
+from difflib import SequenceMatcher
 
 # Start a simple web server for Koyeb health check
 def start_web():
@@ -45,6 +46,8 @@ async def start_handler(client, message: Message):
 @pyrogram_app.on_message(filters.text & filters.private & ~filters.command(["start", "help", "stats", "delete_all", "broadcast", "check_requests"]))
 async def search_movie(client, message: Message):
     query = message.text.strip()
+
+    # পুরো ম্যাচ খোঁজো
     results = list(collection.find({"text": {"$regex": query, "$options": "i"}}))
 
     if results:
@@ -57,18 +60,48 @@ async def search_movie(client, message: Message):
             buttons.append([InlineKeyboardButton(display[:64], callback_data=f"id_{movie['message_id']}")])
 
         await message.reply("আপনি কি নিচের কোনটি খুঁজছেন?", reply_markup=InlineKeyboardMarkup(buttons))
-    else:
-        not_found_collection.update_one(
-            {"query": query.lower()},
-            {"$addToSet": {"users": message.from_user.id}, "$set": {"query": query.lower()}},
-            upsert=True
-        )
-        for admin_id in ADMINS:
-            try:
-                await client.send_message(chat_id=admin_id, text=f"⚠️ ইউজার @{message.from_user.username or message.from_user.id} '{query}' মুভি খুঁজে পায়নি।")
-            except Exception as e:
-                print(f"Failed to notify admin {admin_id}: {e}")
-        await message.reply(f"দুঃখিত, '{query}' নামে কিছু খুঁজে পাইনি!")
+        return
+
+    # পুরো ম্যাচ না পেলে কাছাকাছি ম্যাচ চেক করো
+    all_movies = list(collection.find())
+
+    def similarity(a, b):
+        return SequenceMatcher(None, a.lower(), b.lower()).ratio()
+
+    similar_movies = []
+    for movie in all_movies:
+        title = movie.get("text", "")
+        score = similarity(query, title)
+        if score >= 0.6:  # ৬০% এর বেশি মিল হলে
+            similar_movies.append((score, movie))
+
+    similar_movies.sort(key=lambda x: x[0], reverse=True)
+
+    if similar_movies:
+        buttons = []
+        for _, movie in similar_movies[:10]:
+            title = movie.get("text", "No Title")
+            year = movie.get("year", "")
+            mtype = movie.get("type", "")
+            display = f"{title} ({year} {mtype})".strip()
+            buttons.append([InlineKeyboardButton(display[:64], callback_data=f"id_{movie['message_id']}")])
+
+        await message.reply("আপনি কি নিচের কোনটি খুঁজছেন?", reply_markup=InlineKeyboardMarkup(buttons))
+        return
+
+    # নটিফাই অ্যাডমিন ও ইউজারকে, মুভি না পেলে
+    not_found_collection.update_one(
+        {"query": query.lower()},
+        {"$addToSet": {"users": message.from_user.id}, "$set": {"query": query.lower()}},
+        upsert=True
+    )
+    for admin_id in ADMINS:
+        try:
+            await client.send_message(chat_id=admin_id, text=f"⚠️ ইউজার @{message.from_user.username or message.from_user.id} '{query}' মুভি খুঁজে পায়নি।")
+        except Exception as e:
+            print(f"Failed to notify admin {admin_id}: {e}")
+
+    await message.reply(f"দুঃখিত, '{query}' নামে কিছু খুঁজে পাইনি!")
 
 @pyrogram_app.on_callback_query(filters.regex("^id_"))
 async def suggestion_click(client, callback_query: CallbackQuery):
