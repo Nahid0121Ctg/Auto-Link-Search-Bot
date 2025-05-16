@@ -146,24 +146,32 @@ async def delete_one(_, msg):
     result = movies_col.delete_one({"message_id": mid})
     await msg.reply("Deleted successfully." if result.deleted_count else "Movie not found.")
 
-# ====== শুধুমাত্র এই ফাংশনটুকুই নতুনভাবে আপডেট করা হয়েছে ======
 @app.on_message(filters.text)
 async def search(_, msg):
     raw_query = msg.text.strip()
+    query = clean_text(raw_query)
     users_col.update_one({"_id": msg.from_user.id}, {"$set": {"last_search": datetime.utcnow()}}, upsert=True)
 
-    # মংগোডিবির Regex সার্চ দিয়ে দ্রুত ফলাফল
-    results_cursor = movies_col.find(
-        {"title": {"$regex": re.escape(raw_query), "$options": "i"}}
-    ).limit(RESULTS_COUNT)
+    all_movies = list(movies_col.find({}, {"title": 1, "message_id": 1, "language": 1}))
+    exact_match = [m for m in all_movies if clean_text(m.get("title", "")) == query]
 
-    results = list(results_cursor)
-
-    if results:
-        for m in results:
+    if exact_match:
+        for m in exact_match[:RESULTS_COUNT]:
             forwarded_message = await app.forward_messages(msg.chat.id, CHANNEL_ID, m["message_id"])
             asyncio.create_task(delete_message_later(msg.chat.id, forwarded_message.id))
             await asyncio.sleep(0.7)
+        return
+
+    suggestions = [m for m in all_movies if re.search(re.escape(raw_query), m.get("title", ""), re.IGNORECASE)]
+    if suggestions:
+        lang_buttons = [
+            InlineKeyboardButton("Bengali", callback_data=f"lang_Bengali_{query}"),
+            InlineKeyboardButton("Hindi", callback_data=f"lang_Hindi_{query}"),
+            InlineKeyboardButton("English", callback_data=f"lang_English_{query}")
+        ]
+        buttons = [[InlineKeyboardButton(m["title"][:40], callback_data=f"movie_{m['message_id']}")] for m in suggestions[:RESULTS_COUNT]]
+        buttons.append(lang_buttons)
+        await msg.reply("আপনার মুভির নাম মিলতে পারে, নিচের থেকে সিলেক্ট করুন:", reply_markup=InlineKeyboardMarkup(buttons))
         return
 
     await msg.reply("কোনও ফলাফল পাওয়া যায়নি। অ্যাডমিনকে জানানো হয়েছে।")
