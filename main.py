@@ -55,8 +55,7 @@ def extract_language(text):
     langs = ["Bengali", "Hindi", "English"]
     return next((lang for lang in langs if lang.lower() in text.lower()), "Unknown")
 
-# Delete message after delay (10 minutes)
-async def delete_message_later(chat_id, message_id, delay=600):  # 600 seconds = 10 minutes
+async def delete_message_later(chat_id, message_id, delay=600):
     await asyncio.sleep(delay)
     try:
         await app.delete_messages(chat_id, message_id)
@@ -76,7 +75,6 @@ async def save_post(_, msg: Message):
         "language": extract_language(text)
     }
     movies_col.update_one({"message_id": msg.id}, {"$set": movie}, upsert=True)
-
     setting = settings_col.find_one({"key": "global_notify"})
     if setting and setting.get("value"):
         for user in users_col.find({"notify": {"$ne": False}}):
@@ -99,7 +97,8 @@ async def feedback(_, msg):
     if len(msg.command) < 2:
         return await msg.reply("Please write something after /feedback.")
     feedback_col.insert_one({"user": msg.from_user.id, "text": msg.text.split(None, 1)[1], "time": datetime.utcnow()})
-    await msg.reply("Thanks for your feedback!")
+    m = await msg.reply("Thanks for your feedback!")
+    asyncio.create_task(delete_message_later(m.chat.id, m.id))
 
 @app.on_message(filters.command("broadcast") & filters.user(ADMIN_IDS))
 async def broadcast(_, msg):
@@ -118,43 +117,13 @@ async def broadcast(_, msg):
 async def stats(_, msg):
     await msg.reply(f"Users: {users_col.count_documents({})}\nMovies: {movies_col.count_documents({})}\nFeedbacks: {feedback_col.count_documents({})}")
 
-@app.on_message(filters.command("notify") & filters.user(ADMIN_IDS))
-async def notify(_, msg):
-    if len(msg.command) < 2 or msg.command[1] not in ["on", "off"]:
-        return await msg.reply("Usage: /notify on or /notify off")
-    users_col.update_many({}, {"$set": {"notify": msg.command[1] == "on"}})
-    await msg.reply(f"Notification turned {msg.command[1].upper()} for all users.")
-
-@app.on_message(filters.command("globalnotify") & filters.user(ADMIN_IDS))
-async def globalnotify(_, msg):
-    if len(msg.command) < 2 or msg.command[1] not in ["on", "off"]:
-        return await msg.reply("Usage: /globalnotify on or /globalnotify off")
-    settings_col.update_one({"key": "global_notify"}, {"$set": {"value": msg.command[1] == "on"}}, upsert=True)
-    await msg.reply(f"Global Notify turned {msg.command[1].upper()}")
-
-@app.on_message(filters.command("delete_all") & filters.user(ADMIN_IDS))
-async def delete_all(_, msg):
-    deleted = movies_col.delete_many({}).deleted_count
-    await msg.reply(f"{deleted} টি মুভি মুছে ফেলা হয়েছে।")
-
-@app.on_message(filters.command("delete_movie") & filters.user(ADMIN_IDS))
-async def delete_one(_, msg):
-    try:
-        mid = int(msg.command[1])
-    except:
-        return await msg.reply("Usage: /delete_movie message_id")
-    result = movies_col.delete_one({"message_id": mid})
-    await msg.reply("Deleted successfully." if result.deleted_count else "Movie not found.")
-
 @app.on_message(filters.text)
 async def search(_, msg):
     raw_query = msg.text.strip()
     query = clean_text(raw_query)
     users_col.update_one({"_id": msg.from_user.id}, {"$set": {"last_search": datetime.utcnow()}}, upsert=True)
-
     all_movies = list(movies_col.find({}, {"title": 1, "message_id": 1, "language": 1}))
     exact_match = [m for m in all_movies if clean_text(m.get("title", "")) == query]
-
     if exact_match:
         for m in exact_match[:RESULTS_COUNT]:
             forwarded_message = await app.forward_messages(msg.chat.id, CHANNEL_ID, m["message_id"])
@@ -171,15 +140,17 @@ async def search(_, msg):
         ]
         buttons = [[InlineKeyboardButton(m["title"][:40], callback_data=f"movie_{m['message_id']}")] for m in suggestions[:RESULTS_COUNT]]
         buttons.append(lang_buttons)
-        await msg.reply("আপনার মুভির নাম মিলতে পারে, নিচের থেকে সিলেক্ট করুন:", reply_markup=InlineKeyboardMarkup(buttons))
+        m = await msg.reply("আপনার মুভির নাম মিলতে পারে, নিচের থেকে সিলেক্ট করুন:", reply_markup=InlineKeyboardMarkup(buttons))
+        asyncio.create_task(delete_message_later(m.chat.id, m.id))
         return
 
-    await msg.reply("কোনও ফলাফল পাওয়া যায়নি। অ্যাডমিনকে জানানো হয়েছে।")
+    alert = await msg.reply("কোনও ফলাফল পাওয়া যায়নি। অ্যাডমিনকে জানানো হয়েছে।")
+    asyncio.create_task(delete_message_later(alert.chat.id, alert.id))
     btn = InlineKeyboardMarkup([
-        [InlineKeyboardButton("✅ মুভি আছে", callback_data=f"has_{msg.chat.id}")],
-        [InlineKeyboardButton("❌ নেই", callback_data=f"no_{msg.chat.id}")],
-        [InlineKeyboardButton("⏳ আসবে", callback_data=f"soon_{msg.chat.id}")],
-        [InlineKeyboardButton("✏️ ভুল নাম", callback_data=f"wrong_{msg.chat.id}")]
+        [InlineKeyboardButton("✅ মুভি আছে", callback_data=f"has_{msg.chat.id}_{msg.id}_{raw_query}"),
+         InlineKeyboardButton("❌ নেই", callback_data=f"no_{msg.chat.id}_{msg.id}_{raw_query}")],
+        [InlineKeyboardButton("⏳ আসবে", callback_data=f"soon_{msg.chat.id}_{msg.id}_{raw_query}"),
+         InlineKeyboardButton("✏️ ভুল নাম", callback_data=f"wrong_{msg.chat.id}_{msg.id}_{raw_query}")]
     ])
     for admin_id in ADMIN_IDS:
         await app.send_message(admin_id, f"❗ ইউজার `{msg.from_user.id}` `{msg.from_user.first_name}` খুঁজেছে: **{raw_query}**\nফলাফল পাওয়া যায়নি। নিচে বাটন থেকে উত্তর দিন।", reply_markup=btn)
@@ -187,7 +158,6 @@ async def search(_, msg):
 @app.on_callback_query()
 async def callback_handler(_, cq: CallbackQuery):
     data = cq.data
-
     if data.startswith("movie_"):
         mid = int(data.split("_")[1])
         forwarded_message = await app.forward_messages(cq.message.chat.id, CHANNEL_ID, mid)
@@ -206,19 +176,22 @@ async def callback_handler(_, cq: CallbackQuery):
         await cq.answer()
 
     elif "_" in data:
-        action, user_id = data.split("_")
-        uid = int(user_id)
-        responses = {
-            "has": "✅ মুভিটি ডাটাবেজে আছে। নামটি সঠিকভাবে লিখে আবার চেষ্টা করুন।",
-            "no": "❌ এই মুভিটি ডাটাবেজে নেই।",
-            "soon": "⏳ মুভিটি শিগগির যোগ করা হবে।",
-            "wrong": "✏️ অনুগ্রহ করে সঠিক নাম লিখুন।"
-        }
-        if action in responses:
-            await app.send_message(uid, responses[action])
-            await cq.answer("অ্যাডমিনকে জানানো হয়েছে।")
-        else:
-            await cq.answer()
+        parts = data.split("_", 3)
+        if len(parts) == 4:
+            action, uid, mid, raw_query = parts
+            uid = int(uid)
+            responses = {
+                "has": f"✅ @{cq.from_user.username or cq.from_user.first_name} জানিয়েছেন যে **{raw_query}** মুভিটি ডাটাবেজে আছে। সঠিক নাম লিখে আবার চেষ্টা করুন।",
+                "no": f"❌ @{cq.from_user.username or cq.from_user.first_name} জানিয়েছেন যে **{raw_query}** মুভিটি ডাটাবেজে নেই।",
+                "soon": f"⏳ @{cq.from_user.username or cq.from_user.first_name} জানিয়েছেন যে **{raw_query}** মুভিটি শীঘ্রই আসবে।",
+                "wrong": f"✏️ @{cq.from_user.username or cq.from_user.first_name} বলছেন যে আপনি ভুল নাম লিখেছেন: **{raw_query}**।"
+            }
+            if action in responses:
+                m = await app.send_message(uid, responses[action])
+                asyncio.create_task(delete_message_later(m.chat.id, m.id))
+                await cq.answer("অ্যাডমিনের পক্ষ থেকে উত্তর পাঠানো হয়েছে।")
+            else:
+                await cq.answer()
 
 if __name__ == "__main__":
     print("Bot is starting...")
