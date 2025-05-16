@@ -1,5 +1,3 @@
-# main.py
-
 from pyrogram import Client, filters, idle
 from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from pymongo import MongoClient
@@ -38,14 +36,6 @@ flask_app = Flask(__name__)
 def home(): return "Bot is running!"
 def run(): flask_app.run(host="0.0.0.0", port=8080)
 
-def extract_year(text): 
-    match = re.search(r"(19|20)\d{2}", text)
-    return match.group() if match else None
-
-def extract_language(text): 
-    langs = ["Bengali", "Hindi", "English"]
-    return next((lang for lang in langs if lang.lower() in text.lower()), "Unknown")
-
 @app.on_message(filters.chat(CHANNEL_ID))
 async def save_post(_, msg: Message):
     text = msg.text or msg.caption
@@ -66,6 +56,14 @@ async def save_post(_, msg: Message):
             try:
                 await app.send_message(user["_id"], f"নতুন মুভি আপলোড হয়েছে:\n{text.splitlines()[0][:100]}\n\nএখনই সার্চ করে দেখুন!")
             except: pass
+
+def extract_year(text): 
+    match = re.search(r"(19|20)\d{2}", text)
+    return match.group() if match else None
+
+def extract_language(text): 
+    langs = ["Bengali", "Hindi", "English"]
+    return next((lang for lang in langs if lang.lower() in text.lower()), "Unknown")
 
 @app.on_message(filters.command("start") & (filters.private | filters.group))
 async def start(_, msg):
@@ -158,10 +156,15 @@ async def search(_, msg):
         ]
         buttons = [[InlineKeyboardButton(m["title"][:40], callback_data=f"movie_{m['message_id']}")] for m in suggestions[:RESULTS_COUNT]]
         buttons.append(lang_buttons)
-        await msg.reply("আপনার মুভির নাম মিলতে পারে, নিচের থেকে সিলেক্ট করুন:", reply_markup=InlineKeyboardMarkup(buttons))
+        sent = await msg.reply("আপনার মুভির নাম মিলতে পারে, নিচের থেকে সিলেক্ট করুন:", reply_markup=InlineKeyboardMarkup(buttons))
+        await asyncio.sleep(60)
+        await sent.delete()
         return
 
-    await msg.reply("কোনও ফলাফল পাওয়া যায়নি। অ্যাডমিনকে জানানো হয়েছে।")
+    sent = await msg.reply("কোনও ফলাফল পাওয়া যায়নি। অ্যাডমিনকে জানানো হয়েছে।")
+    await asyncio.sleep(60)
+    await sent.delete()
+
     btn = InlineKeyboardMarkup([
         [InlineKeyboardButton("\u2705 মুভি আছে", callback_data=f"has_{msg.chat.id}")],
         [InlineKeyboardButton("\u274C নেই", callback_data=f"no_{msg.chat.id}")],
@@ -169,7 +172,9 @@ async def search(_, msg):
         [InlineKeyboardButton("\u270F\uFE0F ভুল নাম", callback_data=f"wrong_{msg.chat.id}")]
     ])
     for admin_id in ADMIN_IDS:
-        await app.send_message(admin_id, f"\u2757 ইউজার `{msg.from_user.id}` `{msg.from_user.first_name}` খুঁজেছে: **{raw_query}**\n\nফলাফল পাওয়া যায়নি। নিচে বাটন থেকে উত্তর দিন।", reply_markup=btn)
+        admin_msg = await app.send_message(admin_id, f"\u2757 ইউজার `{msg.from_user.id}` `{msg.from_user.first_name}` খুঁজেছে: **{raw_query}**\n\nফলাফল পাওয়া যায়নি। নিচে বাটন থেকে উত্তর দিন।", reply_markup=btn)
+        await asyncio.sleep(60)
+        await admin_msg.delete()
 
 @app.on_callback_query()
 async def callback_handler(_, cq: CallbackQuery):
@@ -178,19 +183,20 @@ async def callback_handler(_, cq: CallbackQuery):
         mid = int(data.split("_")[1])
         try:
             await app.forward_messages(cq.message.chat.id, CHANNEL_ID, mid)
+            await cq.answer()
         except:
             await cq.message.reply("মুভি পাঠাতে সমস্যা হয়েছে।")
-        await cq.answer()
+            await cq.answer()
     elif data.startswith("lang_"):
         _, lang, query = data.split("_", 2)
-        query = clean_text(query)
-        lang_movies = list(movies_col.find({"language": lang}))
-        matches = [m for m in lang_movies if query in clean_text(m.get("title", ""))]
+        lang_movies = movies_col.find({"language": lang})
+        matches = [m for m in lang_movies if re.search(re.escape(query), m.get("title", ""), re.IGNORECASE)]
         if matches:
-            buttons = [[InlineKeyboardButton(m["title"][:40], callback_data=f"movie_{m['message_id']}")] for m in matches[:RESULTS_COUNT]]
-            await cq.message.edit_text(f"**Language Filtered Results ({lang})**", reply_markup=InlineKeyboardMarkup(buttons))
+            for m in matches[:RESULTS_COUNT]:
+                await app.forward_messages(cq.message.chat.id, CHANNEL_ID, m["message_id"])
+                await asyncio.sleep(1)
         else:
-            await cq.message.edit_text("এই ভাষায় কিছু পাওয়া যায়নি।")
+            await cq.message.reply("এই ভাষায় কিছু পাওয়া যায়নি।")
         await cq.answer()
     elif "_" in data:
         action, user_id = data.split("_")
