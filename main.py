@@ -130,34 +130,39 @@ def clean_text(text):
 
 @app.on_message(filters.text & (filters.private | filters.group))
 async def search(_, msg):
-    query = clean_text(msg.text.strip())
+    raw_query = msg.text.strip()
+    query = clean_text(raw_query)
     users_col.update_one({"_id": msg.from_user.id}, {"$set": {"last_search": datetime.utcnow()}}, upsert=True)
+
     all_movies = list(movies_col.find({}, {"title": 1, "message_id": 1}))
-    exact_match = None
+    exact_match = []
     suggestions = []
+
     for movie in all_movies:
-        title_clean = clean_text(movie.get("title", ""))
+        title = movie.get("title", "")
+        title_clean = clean_text(title)
+
         if title_clean == query:
-            exact_match = movie
-            break
-        if query in title_clean:
+            exact_match.append(movie)
+        elif query in title_clean:
             suggestions.append(movie)
-            if len(suggestions) >= RESULTS_COUNT:
-                break
+
     if exact_match:
         try:
-            m = await app.forward_messages(msg.chat.id, CHANNEL_ID, exact_match["message_id"])
-            await asyncio.sleep(30)
-            await app.delete_messages(msg.chat.id, m.id)
+            for m in exact_match[:RESULTS_COUNT]:
+                fmsg = await app.forward_messages(msg.chat.id, CHANNEL_ID, m["message_id"])
+                await asyncio.sleep(1)
         except:
             await msg.reply("মুভি পাঠাতে সমস্যা হয়েছে।")
+        return
     elif suggestions:
         buttons = []
-        for movie in suggestions:
+        for movie in suggestions[:RESULTS_COUNT]:
             title = movie.get("title", "Unknown")
             mid = movie.get("message_id")
             buttons.append([InlineKeyboardButton(title[:40], callback_data=f"movie_{mid}")])
         await msg.reply("আপনার মুভির নাম মিলতে পারে, নিচের থেকে সিলেক্ট করুন:", reply_markup=InlineKeyboardMarkup(buttons))
+        return
     else:
         await msg.reply("কোনও ফলাফল পাওয়া যায়নি। অ্যাডমিনকে জানানো হয়েছে।")
         btn = InlineKeyboardMarkup([
@@ -167,7 +172,11 @@ async def search(_, msg):
             [InlineKeyboardButton("\u270F\uFE0F ভুল নাম", callback_data=f"wrong_{msg.chat.id}")]
         ])
         for admin_id in ADMIN_IDS:
-            await app.send_message(admin_id, f"\u2757 ইউজার `{msg.from_user.id}` `{msg.from_user.first_name}` খুঁজেছে: **{msg.text.strip()}**\n\nফলাফল পাওয়া যায়নি। নিচে বাটন থেকে উত্তর দিন।", reply_markup=btn)
+            await app.send_message(
+                admin_id,
+                f"\u2757 ইউজার `{msg.from_user.id}` `{msg.from_user.first_name}` খুঁজেছে: **{raw_query}**\n\nফলাফল পাওয়া যায়নি। নিচে বাটন থেকে উত্তর দিন।",
+                reply_markup=btn
+            )
 
 @app.on_callback_query()
 async def callback_handler(_, cq: CallbackQuery):
