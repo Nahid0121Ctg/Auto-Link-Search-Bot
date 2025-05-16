@@ -1,4 +1,6 @@
-from pyrogram import Client, filters
+# main.py
+
+from pyrogram import Client, filters, idle
 from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from pymongo import MongoClient
 from flask import Flask
@@ -36,6 +38,14 @@ flask_app = Flask(__name__)
 def home(): return "Bot is running!"
 def run(): flask_app.run(host="0.0.0.0", port=8080)
 
+def extract_year(text): 
+    match = re.search(r"(19|20)\d{2}", text)
+    return match.group() if match else None
+
+def extract_language(text): 
+    langs = ["Bengali", "Hindi", "English"]
+    return next((lang for lang in langs if lang.lower() in text.lower()), "Unknown")
+
 @app.on_message(filters.chat(CHANNEL_ID))
 async def save_post(_, msg: Message):
     text = msg.text or msg.caption
@@ -57,20 +67,12 @@ async def save_post(_, msg: Message):
                 await app.send_message(user["_id"], f"নতুন মুভি আপলোড হয়েছে:\n{text.splitlines()[0][:100]}\n\nএখনই সার্চ করে দেখুন!")
             except: pass
 
-def extract_year(text): 
-    match = re.search(r"(19|20)\d{2}", text)
-    return match.group() if match else None
-
-def extract_language(text): 
-    langs = ["Bengali", "Hindi", "English"]
-    return next((lang for lang in langs if lang.lower() in text.lower()), "Unknown")
-
 @app.on_message(filters.command("start") & (filters.private | filters.group))
 async def start(_, msg):
     users_col.update_one({"_id": msg.from_user.id}, {"$set": {"joined": datetime.utcnow()}}, upsert=True)
     btns = InlineKeyboardMarkup([
         [InlineKeyboardButton("Update Channel", url=UPDATE_CHANNEL)],
-        [InlineKeyboardButton("Contact Admin", url=f"https://t.me/ctgmovies23")]
+        [InlineKeyboardButton("Contact Admin", url="https://t.me/ctgmovies23")]
     ])
     await msg.reply_photo(photo=START_PIC, caption="Send me a movie name to search.", reply_markup=btns)
 
@@ -176,20 +178,19 @@ async def callback_handler(_, cq: CallbackQuery):
         mid = int(data.split("_")[1])
         try:
             await app.forward_messages(cq.message.chat.id, CHANNEL_ID, mid)
-            await cq.answer()
         except:
             await cq.message.reply("মুভি পাঠাতে সমস্যা হয়েছে।")
-            await cq.answer()
+        await cq.answer()
     elif data.startswith("lang_"):
         _, lang, query = data.split("_", 2)
-        lang_movies = movies_col.find({"language": lang})
-        matches = [m for m in lang_movies if re.search(re.escape(query), m.get("title", ""), re.IGNORECASE)]
+        query = clean_text(query)
+        lang_movies = list(movies_col.find({"language": lang}))
+        matches = [m for m in lang_movies if query in clean_text(m.get("title", ""))]
         if matches:
-            for m in matches[:RESULTS_COUNT]:
-                await app.forward_messages(cq.message.chat.id, CHANNEL_ID, m["message_id"])
-                await asyncio.sleep(1)
+            buttons = [[InlineKeyboardButton(m["title"][:40], callback_data=f"movie_{m['message_id']}")] for m in matches[:RESULTS_COUNT]]
+            await cq.message.edit_text(f"**Language Filtered Results ({lang})**", reply_markup=InlineKeyboardMarkup(buttons))
         else:
-            await cq.message.reply("এই ভাষায় কিছু পাওয়া যায়নি।")
+            await cq.message.edit_text("এই ভাষায় কিছু পাওয়া যায়নি।")
         await cq.answer()
     elif "_" in data:
         action, user_id = data.split("_")
@@ -208,5 +209,9 @@ async def callback_handler(_, cq: CallbackQuery):
                 await cq.answer("ইউজারকে মেসেজ পাঠানো যায়নি", show_alert=True)
 
 if __name__ == "__main__":
-    Thread(target=run).start()
-    app.run()
+    Thread(target=run, daemon=True).start()
+    print("Bot started...")
+    app.start()
+    idle()
+    app.stop()
+    print("Bot stopped.")
