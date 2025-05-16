@@ -13,7 +13,7 @@ API_HASH = os.getenv("API_HASH")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHANNEL_ID = int(os.getenv("CHANNEL_ID"))
 RESULTS_COUNT = int(os.getenv("RESULTS_COUNT", 5))
-ADMIN_ID = int(os.getenv("ADMIN_ID"))
+ADMIN_IDS = list(map(int, os.getenv("ADMIN_IDS", "").split(",")))
 DATABASE_URL = os.getenv("DATABASE_URL")
 UPDATE_CHANNEL = os.getenv("UPDATE_CHANNEL", "https://t.me/CTGMovieOfficial")
 START_PIC = os.getenv("START_PIC", "https://i.ibb.co/prnGXMr3/photo-2025-05-16-05-15-45-7504908428624527364.jpg")
@@ -68,7 +68,6 @@ def extract_language(text):
 @app.on_message(filters.command("start") & (filters.private | filters.group))
 async def start(_, msg):
     users_col.update_one({"_id": msg.from_user.id}, {"$set": {"joined": datetime.utcnow()}}, upsert=True)
-    admin_user = await app.get_users(ADMIN_ID)
     btns = InlineKeyboardMarkup([
         [InlineKeyboardButton("Update Channel", url=UPDATE_CHANNEL)],
         [InlineKeyboardButton("Contact Admin", url=f"https://t.me/ctgmovies23")]
@@ -82,7 +81,7 @@ async def feedback(_, msg):
     feedback_col.insert_one({"user": msg.from_user.id, "text": msg.text.split(None, 1)[1], "time": datetime.utcnow()})
     await msg.reply("Thanks for your feedback!")
 
-@app.on_message(filters.command("broadcast") & filters.user(ADMIN_ID))
+@app.on_message(filters.command("broadcast") & filters.user(ADMIN_IDS))
 async def broadcast(_, msg):
     if len(msg.command) < 2: 
         return await msg.reply("Usage: /broadcast Your message here")
@@ -94,30 +93,30 @@ async def broadcast(_, msg):
         except: pass
     await msg.reply(f"Broadcast sent to {count} users.")
 
-@app.on_message(filters.command("stats") & filters.user(ADMIN_ID))
+@app.on_message(filters.command("stats") & filters.user(ADMIN_IDS))
 async def stats(_, msg):
     await msg.reply(f"Users: {users_col.count_documents({})}\nMovies: {movies_col.count_documents({})}\nFeedbacks: {feedback_col.count_documents({})}")
 
-@app.on_message(filters.command("notify") & filters.user(ADMIN_ID))
+@app.on_message(filters.command("notify") & filters.user(ADMIN_IDS))
 async def notify(_, msg):
     if len(msg.command) < 2 or msg.command[1] not in ["on", "off"]:
         return await msg.reply("Usage: /notify on or /notify off")
     users_col.update_many({}, {"$set": {"notify": msg.command[1] == "on"}})
     await msg.reply(f"Notification turned {msg.command[1].upper()} for all users.")
 
-@app.on_message(filters.command("globalnotify") & filters.user(ADMIN_ID))
+@app.on_message(filters.command("globalnotify") & filters.user(ADMIN_IDS))
 async def globalnotify(_, msg):
     if len(msg.command) < 2 or msg.command[1] not in ["on", "off"]:
         return await msg.reply("Usage: /globalnotify on or /globalnotify off")
     settings_col.update_one({"key": "global_notify"}, {"$set": {"value": msg.command[1] == "on"}})
     await msg.reply(f"Global Notify turned {msg.command[1].upper()}")
 
-@app.on_message(filters.command("delete_all") & filters.user(ADMIN_ID))
+@app.on_message(filters.command("delete_all") & filters.user(ADMIN_IDS))
 async def delete_all(_, msg):
     deleted = movies_col.delete_many({}).deleted_count
     await msg.reply(f"{deleted} টি মুভি মুছে ফেলা হয়েছে।")
 
-@app.on_message(filters.command("delete_movie") & filters.user(ADMIN_ID))
+@app.on_message(filters.command("delete_movie") & filters.user(ADMIN_IDS))
 async def delete_one(_, msg):
     try: 
         mid = int(msg.command[1])
@@ -167,7 +166,8 @@ async def search(_, msg):
             [InlineKeyboardButton("\u23F3 আসবে", callback_data=f"soon_{msg.chat.id}")],
             [InlineKeyboardButton("\u270F\uFE0F ভুল নাম", callback_data=f"wrong_{msg.chat.id}")]
         ])
-        await app.send_message(ADMIN_ID, f"\u2757 ইউজার `{msg.from_user.id}` `{msg.from_user.first_name}` খুঁজেছে: **{msg.text.strip()}**\n\nফলাফল পাওয়া যায়নি। নিচে বাটন থেকে উত্তর দিন।", reply_markup=btn)
+        for admin_id in ADMIN_IDS:
+            await app.send_message(admin_id, f"\u2757 ইউজার `{msg.from_user.id}` `{msg.from_user.first_name}` খুঁজেছে: **{msg.text.strip()}**\n\nফলাফল পাওয়া যায়নি। নিচে বাটন থেকে উত্তর দিন।", reply_markup=btn)
 
 @app.on_callback_query()
 async def callback_handler(_, cq: CallbackQuery):
