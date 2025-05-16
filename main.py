@@ -1,6 +1,6 @@
 from pyrogram import Client, filters
 from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
-from pymongo import MongoClient
+from pymongo import MongoClient, ASCENDING
 from flask import Flask
 from threading import Thread
 import os
@@ -30,17 +30,18 @@ stats_col = db["stats"]
 users_col = db["users"]
 settings_col = db["settings"]
 
-# Flask for Render or Koyeb
+# Index for fast search
+movies_col.create_index([("title", ASCENDING)])
+movies_col.create_index("message_id")
+movies_col.create_index("language")
+
+# Flask setup
 flask_app = Flask(__name__)
 @flask_app.route("/")
 def home():
     return "Bot is running!"
 
-def run():
-    flask_app.run(host="0.0.0.0", port=8080)
-
-# Start flask in a thread
-Thread(target=run).start()
+Thread(target=lambda: flask_app.run(host="0.0.0.0", port=8080)).start()
 
 # Helpers
 def clean_text(text):
@@ -54,7 +55,14 @@ def extract_language(text):
     langs = ["Bengali", "Hindi", "English"]
     return next((lang for lang in langs if lang.lower() in text.lower()), "Unknown")
 
-# Save new messages from channel
+# Delete message after delay (10 minutes)
+async def delete_message_later(chat_id, message_id, delay=600):  # 600 seconds = 10 minutes
+    await asyncio.sleep(delay)
+    try:
+        await app.delete_messages(chat_id, message_id)
+    except:
+        pass
+
 @app.on_message(filters.chat(CHANNEL_ID))
 async def save_post(_, msg: Message):
     text = msg.text or msg.caption
@@ -70,15 +78,14 @@ async def save_post(_, msg: Message):
     movies_col.update_one({"message_id": msg.id}, {"$set": movie}, upsert=True)
 
     setting = settings_col.find_one({"key": "global_notify"})
-    if setting and setting["value"]:
+    if setting and setting.get("value"):
         for user in users_col.find({"notify": {"$ne": False}}):
             try:
-                await app.send_message(user["_id"], f"নতুন মুভি আপলোড হয়েছে:\n{text.splitlines()[0][:100]}\n\nএখনই সার্চ করে দেখুন!")
+                await app.send_message(user["_id"], f"নতুন মুভি আপলোড হয়েছে:\n{text.splitlines()[0][:100]}\nএখনই সার্চ করে দেখুন!")
             except:
                 pass
 
-# /start command
-@app.on_message(filters.command("start") & (filters.private | filters.group))
+@app.on_message(filters.command("start"))
 async def start(_, msg):
     users_col.update_one({"_id": msg.from_user.id}, {"$set": {"joined": datetime.utcnow()}}, upsert=True)
     btns = InlineKeyboardMarkup([
@@ -87,7 +94,6 @@ async def start(_, msg):
     ])
     await msg.reply_photo(photo=START_PIC, caption="Send me a movie name to search.", reply_markup=btns)
 
-# /feedback command
 @app.on_message(filters.command("feedback") & filters.private)
 async def feedback(_, msg):
     if len(msg.command) < 2:
@@ -95,7 +101,6 @@ async def feedback(_, msg):
     feedback_col.insert_one({"user": msg.from_user.id, "text": msg.text.split(None, 1)[1], "time": datetime.utcnow()})
     await msg.reply("Thanks for your feedback!")
 
-# Admin commands: /broadcast, /stats, /notify, /globalnotify, /delete_all, /delete_movie
 @app.on_message(filters.command("broadcast") & filters.user(ADMIN_IDS))
 async def broadcast(_, msg):
     if len(msg.command) < 2:
@@ -124,7 +129,7 @@ async def notify(_, msg):
 async def globalnotify(_, msg):
     if len(msg.command) < 2 or msg.command[1] not in ["on", "off"]:
         return await msg.reply("Usage: /globalnotify on or /globalnotify off")
-    settings_col.update_one({"key": "global_notify"}, {"$set": {"value": msg.command[1] == "on"}})
+    settings_col.update_one({"key": "global_notify"}, {"$set": {"value": msg.command[1] == "on"}}, upsert=True)
     await msg.reply(f"Global Notify turned {msg.command[1].upper()}")
 
 @app.on_message(filters.command("delete_all") & filters.user(ADMIN_IDS))
@@ -141,8 +146,7 @@ async def delete_one(_, msg):
     result = movies_col.delete_one({"message_id": mid})
     await msg.reply("Deleted successfully." if result.deleted_count else "Movie not found.")
 
-# Search handler
-@app.on_message(filters.text & (filters.private | filters.group))
+@app.on_message(filters.text)
 async def search(_, msg):
     raw_query = msg.text.strip()
     query = clean_text(raw_query)
@@ -152,14 +156,11 @@ async def search(_, msg):
     exact_match = [m for m in all_movies if clean_text(m.get("title", "")) == query]
 
     if exact_match:
-        try:
-            for m in exact_match[:RESULTS_COUNT]:
-                await app.forward_messages(msg.chat.id, CHANNEL_ID, m["message_id"])
-                await asyncio.sleep(1)
-            return
-        except:
-            await msg.reply("মুভি পাঠাতে সমস্যা হয়েছে।")
-            return
+        for m in exact_match[:RESULTS_COUNT]:
+            forwarded_message = await app.forward_messages(msg.chat.id, CHANNEL_ID, m["message_id"])
+            asyncio.create_task(delete_message_later(msg.chat.id, forwarded_message.id))
+            await asyncio.sleep(0.7)
+        return
 
     suggestions = [m for m in all_movies if re.search(re.escape(raw_query), m.get("title", ""), re.IGNORECASE)]
     if suggestions:
@@ -175,59 +176,49 @@ async def search(_, msg):
 
     await msg.reply("কোনও ফলাফল পাওয়া যায়নি। অ্যাডমিনকে জানানো হয়েছে।")
     btn = InlineKeyboardMarkup([
-        [InlineKeyboardButton("\u2705 মুভি আছে", callback_data=f"has_{msg.chat.id}")],
-        [InlineKeyboardButton("\u274C নেই", callback_data=f"no_{msg.chat.id}")],
-        [InlineKeyboardButton("\u23F3 আসবে", callback_data=f"soon_{msg.chat.id}")],
-        [InlineKeyboardButton("\u270F\uFE0F ভুল নাম", callback_data=f"wrong_{msg.chat.id}")]
+        [InlineKeyboardButton("✅ মুভি আছে", callback_data=f"has_{msg.chat.id}")],
+        [InlineKeyboardButton("❌ নেই", callback_data=f"no_{msg.chat.id}")],
+        [InlineKeyboardButton("⏳ আসবে", callback_data=f"soon_{msg.chat.id}")],
+        [InlineKeyboardButton("✏️ ভুল নাম", callback_data=f"wrong_{msg.chat.id}")]
     ])
     for admin_id in ADMIN_IDS:
-        await app.send_message(admin_id, f"\u2757 ইউজার `{msg.from_user.id}` `{msg.from_user.first_name}` খুঁজেছে: **{raw_query}**\n\nফলাফল পাওয়া যায়নি। নিচে বাটন থেকে উত্তর দিন।", reply_markup=btn)
+        await app.send_message(admin_id, f"❗ ইউজার `{msg.from_user.id}` `{msg.from_user.first_name}` খুঁজেছে: **{raw_query}**\nফলাফল পাওয়া যায়নি। নিচে বাটন থেকে উত্তর দিন।", reply_markup=btn)
 
-# Callback handler
 @app.on_callback_query()
 async def callback_handler(_, cq: CallbackQuery):
     data = cq.data
 
     if data.startswith("movie_"):
-        # মুভি বাটনে ক্লিক করলে মুভি ফরওয়ার্ড করবে
         mid = int(data.split("_")[1])
-        try:
-            await app.forward_messages(cq.message.chat.id, CHANNEL_ID, mid)
-            await cq.answer("মুভি পাঠানো হয়েছে।")
-        except:
-            await cq.message.reply("মুভি পাঠাতে সমস্যা হয়েছে।")
-            await cq.answer()
+        forwarded_message = await app.forward_messages(cq.message.chat.id, CHANNEL_ID, mid)
+        asyncio.create_task(delete_message_later(cq.message.chat.id, forwarded_message.id))
+        await cq.answer("মুভি পাঠানো হয়েছে।")
 
     elif data.startswith("lang_"):
-        # ল্যাঙ্গুয়েজ বাটনে ক্লিক করলে মুভির তালিকা আপডেট করবে, মুভি ফরওয়ার্ড করবে না
         _, lang, query = data.split("_", 2)
         lang_movies = list(movies_col.find({"language": lang}))
         matches = [m for m in lang_movies if re.search(re.escape(query), m.get("title", ""), re.IGNORECASE)]
-
         if matches:
             buttons = [[InlineKeyboardButton(m["title"][:40], callback_data=f"movie_{m['message_id']}")] for m in matches[:RESULTS_COUNT]]
             await cq.message.edit_text(f"ফলাফল ({lang}) - নিচের থেকে সিলেক্ট করুন:", reply_markup=InlineKeyboardMarkup(buttons))
         else:
             await cq.answer("এই ভাষায় কিছু পাওয়া যায়নি।", show_alert=True)
-
         await cq.answer()
 
     elif "_" in data:
         action, user_id = data.split("_")
         uid = int(user_id)
         responses = {
-            "has": "\u2705 মুভিটি ডাটাবেজে আছে। নামটি সঠিকভাবে লিখে আবার চেষ্টা করুন।",
-            "no": "\u274C এই মুভিটি ডাটাবেজে নেই।",
-            "soon": "\u23F3 মুভিটি শিগগির যোগ করা হবে।",
-            "wrong": "\u270F\uFE0F অনুগ্রহ করে সঠিক নাম লিখুন।"
+            "has": "✅ মুভিটি ডাটাবেজে আছে। নামটি সঠিকভাবে লিখে আবার চেষ্টা করুন।",
+            "no": "❌ এই মুভিটি ডাটাবেজে নেই।",
+            "soon": "⏳ মুভিটি শিগগির যোগ করা হবে।",
+            "wrong": "✏️ অনুগ্রহ করে সঠিক নাম লিখুন।"
         }
         if action in responses:
             await app.send_message(uid, responses[action])
             await cq.answer("অ্যাডমিনকে জানানো হয়েছে।")
         else:
             await cq.answer()
-    else:
-        await cq.answer()
 
 if __name__ == "__main__":
     print("Bot is starting...")
