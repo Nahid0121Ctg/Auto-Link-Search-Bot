@@ -1,4 +1,4 @@
-# Auto Link Search Bot
+# Terabox Link BD Bot
 
 A powerful and intelligent Telegram bot to search and fetch movie/series links directly from your Telegram channel. Built using **Pyrogram** and **MongoDB**, optimized for speed, accuracy, and user engagement.
 
@@ -18,7 +18,7 @@ A powerful and intelligent Telegram bot to search and fetch movie/series links d
 
 ## Demo
 
-Try the bot here: [@TeraboxLinkBDBot](https://t.me/@TeraboxLinkBDBot)
+Try the bot here: [@TeraboxLinkBDBot](https://t.me/TeraboxLinkBDBot)
 
 ## Deployment
 
