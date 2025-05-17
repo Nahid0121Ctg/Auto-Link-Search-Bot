@@ -155,9 +155,12 @@ async def search(_, msg):
         {"$set": {"last_search": datetime.utcnow()}},
         upsert=True
     )
+
+    loading = await msg.reply("🔎 লোড হচ্ছে, অনুগ্রহ করে অপেক্ষা করুন...")
     all_movies = list(movies_col.find({}, {"title": 1, "message_id": 1, "language": 1}))
     exact_match = [m for m in all_movies if clean_text(m.get("title", "")) == query]
     if exact_match:
+        await loading.delete()
         for m in exact_match[:RESULTS_COUNT]:
             fwd = await app.forward_messages(msg.chat.id, CHANNEL_ID, m["message_id"])
             asyncio.create_task(delete_message_later(msg.chat.id, fwd.id))
@@ -169,6 +172,7 @@ async def search(_, msg):
         if re.search(re.escape(raw_query), m.get("title", ""), re.IGNORECASE)
     ]
     if suggestions:
+        await loading.delete()
         lang_buttons = [
             InlineKeyboardButton("Bengali", callback_data=f"lang_Bengali_{query}"),
             InlineKeyboardButton("Hindi", callback_data=f"lang_Hindi_{query}"),
@@ -183,7 +187,7 @@ async def search(_, msg):
         asyncio.create_task(delete_message_later(m.chat.id, m.id))
         return
 
-    # যদি কোন ফলাফল না পাওয়া যায় তাহলে গুগল সার্চের বাটন দেখানো হবে
+    await loading.delete()
     google_search_url = "https://www.google.com/search?q=" + urllib.parse.quote(raw_query)
     google_button = InlineKeyboardMarkup([
         [InlineKeyboardButton("Search on Google", url=google_search_url)]
