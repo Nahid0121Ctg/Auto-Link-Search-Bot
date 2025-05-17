@@ -18,7 +18,7 @@ A powerful and intelligent Telegram bot to search and fetch movie/series links d
 
 ## Demo
 
-Try the bot here: [@Auto_Link_Search_Bot](https://t.me/Auto_Link_Search_Bot)
+Try the bot here: [@TeraboxLinkBDBot](https://t.me/@TeraboxLinkBDBot)
 
 ## Deployment
 
